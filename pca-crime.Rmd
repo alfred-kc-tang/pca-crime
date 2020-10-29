@@ -1,0 +1,342 @@
+---
+title: "Principal Component Analysis on Crime Rates"
+author: "Alfred Ka Chau Tang"
+date: "10/12/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exploratory Data Analysis (EDA)
+
+```{r}
+data <- read.table("uscrime.txt", header = TRUE)
+dim(data)
+```
+
+There are 47 observations with 16 variables, one of which is the response variable, i.e. crime rate, that we are going to predict. Given the small sample size relative to the number of explanatory variables, another useful technique that is alternative to variable selection is Principal Component Analysis (PCA). Before applying to PCA, Let us first proceed on EDA by taking a took at the data with head and summary functions, and then plot scatterplots of the response variable against each of the explanatory variables.
+
+```{r}
+head(data)
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+par(mfrow = c(4, 4), mar = c(2, 2, 2, 2)) 
+for (i in 1:15) {
+  plot(data[, i], data[, 16], main = names(data)[i])
+}
+```
+
+After seeing how the explantory variables relate to the response variable in the scatterplots, we can take another look at whether there are some correlations between the explanatory variables themselves by using the corrgram function on the variables.
+
+```{r}
+library(gpairs)
+suppressWarnings(corrgram(data))
+```
+
+The blue color indicates positive correlation while red indicates negative correlation in the corrgram; moreover, the darker the color is, the stronger the relationship is. From the above corrgram, the pairs of So and Ed, Ed and NW, M and Wealth, So and Wealth, Ed and Ineq, Po1 and Ineq, Po2 and Ineq as well as Wealth and Ineq, are strongly negatively correlated, whereas the pairs of Po1 and Po2, So and NW, Ed and Wealth, Po1 and Wealth, Po2 and Wealth, M and Ineq as well as So and Ineq are strongly positively correlated. In other words, some of the explanatory variables are correlated with each other, and hence PCA can be used for the removal of the correlations between the explanatory variables, in addition to the reduction of dimensionality.
+
+# Data Hold-Out
+
+Before conducting PCA, I would like to hold out part of the data as the test data, in order to have an unbiased estimate of the model performance.
+
+```{r}
+set.seed(2835)
+test_mask <- sample(nrow(data), round(nrow(data) * 0.2))
+test_data <- data[test_mask,]
+nontest_data <- data[-test_mask,] 
+```
+
+# Principal Component Analysis (PCA)
+
+The PCA output is shown as follows:
+
+```{r}
+pca <- prcomp(~ ., nontest_data[, -ncol(nontest_data)], scale. = TRUE)
+pca
+```
+
+After doing PCA, using how many of principal components will be the next question. The elbow method is used to determine the number of first principal components to be used in the following:
+
+```{r}
+screeplot(pca, type="lines", main = "Elbow Diagram")
+```
+
+By the elbow criterion, the first three principal components should be used for fitting a regression model. It can be argued in another way that the explained variances of only the first three principal components are greater than 2.
+
+```{r}
+pc_crime <- data.frame(pca$x, "Crime" = nontest_data[, ncol(nontest_data)])
+lm1 <- lm(Crime ~ PC1 + PC2 + PC3, data = pc_crime)
+summary(lm1)
+```
+
+However, as we see from the model summary, the p-value for PC3 is nearly 0.8, which is quite high. That means the presence of PC3 does not help much in explaining the variances of the training data. Therefore, PC3 could be removed from the model.
+
+```{r}
+lm1 <- update(lm1, . ~ . - PC3)
+summary(lm1)
+```
+
+After the removal of PC3, the p-value for PC2 is around 0.1. Although it is still higher than the significance level of 0.05, it can be argued that it is small. For that reason, I would like to build two models where one uses PC1 (i.e. lm1) and the other uses both PC1 and PC2 (lm2).
+
+```{r}
+lm1 <- update(lm1, . ~ . - PC2)
+summary(lm1)
+```
+
+```{r}
+lm2 <- lm(Crime ~ PC1 + PC2, pc_crime)
+summary(lm2)
+```
+
+# Interpretation in Terms of Original Variables
+
+In order to specify these two models in terms of the original variables, the following formulae are needed:
+
+$$
+y_{i} = \beta_{0} + \sum_{j=1}^m x_{ij}[\alpha_j]
+$$
+
+$$
+\alpha_{j} = \sum_{k=1}^L \beta_{k}v_{jk}
+$$
+
+where $m$ denotes the number of original explanatory variables, $L$ represents the number of selected principal components, and $v_jk$ refers to the kth principal component for the jth explanatory variable.
+
+The specification of the models in terms of the original variables is done by looking for the $\alpha_j$ for each of the original variables, which can be computed as follows:
+
+```{r}
+lm1_a_j <- as.matrix(pca$rotation[, 1] * lm1$coefficients[1+1])
+lm2_a_j <- pca$rotation[, c(1, 2)] %*% lm2$coefficients[c(2, 3)]
+```
+
+```{r}
+lm1_a_j
+```
+
+```{r}
+lm2_a_j
+```
+
+Therefore, the first model can be reexpressed in terms of the scaled original variables in the following formula:
+
+$$
+y_{i} = 928.84 - 20.800970M_{i} - 24.563451So_{i} + 24.972618Ed_{i} + 23.144746Po1_{i}
+$$
+$$
++ 23.243654Po2_{i} + 13.346409LF_{i} + 6.113965MF_{i} + 9.870149Pop_{i} - 21.108358NW_{i}
+$$
+$$
+- 2.583175U1_{i} - 3.442370U2_{i} + 27.663069Wealth_{i} - 27.027078Ineq_{i} - 19.504811Prob_{i}
+$$
+$$
+- 1.149916Time_{i}
+$$
+
+The second model would be repexpressed as:
+
+$$
+y_{i} = 928.84 - 26.483211M_{i} - 15.123229So_{i} + 12.867827Ed_{i} + 39.441692Po1_{i}
+$$
+$$
++ 39.807717Po2_{i} - 7.850888LF_{i} - 19.568041MF_{i} + 37.338484Pop_{i} - 7.836426NW_{i}
+$$
+$$
+- 2.270323U1_{i} + 16.337200U2_{i} + 32.995745Wealth_{i} - 26.328011Ineq_{i} - 22.867680Prob_{i}
+$$
+$$
++ 18.488387Time_{i}
+$$
+
+In order to make predictions for test set, unscaling the coefficients is needed in advance. Given the following formula for scaling:
+
+$$
+x_{ij, scaled} = \frac{x_{ij, unscaled}-\overline x_{j}}{\sigma_{x_{j}}}
+$$
+
+Then the model formula would be:
+
+$$
+y_{i} = \beta_{0} + \sum_{j=1}^m \frac{x_{ij}-\overline x_{j}}{\sigma_{x_{j}}}[\alpha_j]
+$$
+$$
+= \beta_{0} + \sum_{j=1}^m \frac{x_{ij}\alpha_{j} - \overline x_{j}\alpha_{j}}{\sigma_{x_{j}}}
+$$
+$$
+= \beta_{0} + \sum_{j=1}^m [\frac{x_{ij}\alpha_{j}}{\sigma_{x_{j}}} - \frac{\overline x_{j}\alpha_{j}}{\sigma_{x_{j}}}]
+$$
+$$
+= \beta_{0} + \sum_{j=1}^m \frac{x_{ij}\alpha_{j}}{\sigma_{x_{j}}} - \sum_{j=1}^m \frac{\overline x_{j}\alpha_{j}}{\sigma_{x_{j}}}
+$$
+$$
+= \beta_{0} + \sum_{j=1}^m x_{ij}\frac{a_{j}}{\sigma_{x_{j}}} - \sum_{j=1}^m \frac{\overline x_{j}a_{j}}{\sigma_{x_{j}}}
+$$
+
+On the one hand, since the substrand is a constant, it can be put into the intercept term; on the other, the new coeffficents can be defined by the old coefficients divided by the standard deviation of their corresponding variables. As a result, the unscaled formula for the model is as follows:
+
+$$
+= \beta_{0, unscaled} + \sum_{j=1}^m x_{ij, unscaled} \alpha_{j, unscaled}
+$$
+where
+$$
+\alpha_{j, unscaled} = \frac{\alpha_{j, scaled}}{\sigma_{x_{j}}} 
+$$
+
+$$
+\beta_{0, unscaled} = \beta_{0, scaled} - \sum_{j=1}^m \frac{\overline x_{j}\alpha_{j, scaled}}{\sigma_{x_{j}}}
+$$
+
+```{r}
+col_means <- colMeans(nontest_data[, -16])
+# install.packages("dplyr")
+library(dplyr)
+col_sds <- t(as.matrix(nontest_data[, -ncol(nontest_data)] 
+                       %>% summarise_if(is.numeric, sd)))
+lm1_beta0_us <- lm1$coefficients[1] - sum(col_means * lm1_a_j / col_sds)
+lm1_beta0_us
+```
+
+```{r}
+lm2_beta0_us <- lm2$coefficients[1] - sum(col_means * lm2_a_j / col_sds)
+lm2_beta0_us
+```
+
+```{r}
+lm1_a_j_us <- lm1_a_j / col_sds
+lm1_a_j_us
+```
+
+```{r}
+lm2_a_j_us <- lm2_a_j / col_sds
+lm2_a_j_us
+```
+
+Therefore, the first model can be reexpressed in terms of the unscaled original variables in the following formula:
+
+$$
+y_{i} = 488.1296 - 16.77042133M_{i} - 51.09052390So_{i} + 22.41065351Ed_{i} + 7.36400319Po1_{i}
+$$
+$$
++ 7.88922938Po2_{i} + 333.00421884LF_{i} + 2.07332573MF_{i} + 0.25129051Pop_{i} - 2.06365087NW_{i}
+$$
+$$
+- 146.97708347U1_{i} - 4.03004926U2_{i} + 0.02740448Wealth_{i} - 6.48383800Ineq_{i} - 886.99112597Prob_{i}
+$$
+$$
+- 0.16670341Time_{i}
+$$
+
+The second model would be repexpressed as:
+
+$$
+y_{i} = 1500.563 - 21.35163M_{i} - 31.45542So_{i} + 11.5477Ed_{i} + 12.54923Po1_{i}
+$$
+$$
++ 13.51131Po2_{i} - 195.8863LF_{i} - 6.63578MF_{i} + 0.9506246Pop_{i} - 0.7661253NW_{i}
+$$
+$$
+- 129.1765U1_{i} + 19.12628U2_{i} + 0.03268731Wealth_{i} - 6.316131Ineq_{i} - 1039.919Prob_{i}
+$$
+$$
++ 2.680263Time_{i}
+$$
+
+# Model Comparison
+
+Before comparing the qualities of these two models and the model selected from the [other project](https://alfred-kctang.github.io/lm-crime/), the latter model is shown for the sake of ease of reference:
+
+```{r}
+lm3 <- lm(formula = Crime ~ M + Ed + Po1 + U2 + Ineq + Prob, nontest_data)
+summary(lm3)
+```
+
+The Residual Sum of Squares (RSS) is a commonly used measure of performance on a regression model. It is true that it is a good criterion for comparing models with the same number of explanatory variables, yet it is not the case for models with different numbers of explanatory variables. Since RSS decreases as the number of explanatory variables used in a model increases, a full model using all available explanatory variables is always chosen by RSS.
+
+Due to the very limitation of RSS, the prediction performance by using Leave One Out Cross Validation (LOOCV) is a sensible measure of quality for comparing models using different numbers of explanatory variables. The LOOCV procedure works as follows: for each observation i = 1, ..., n, build a given model by using (n - 1) observations without the observation itself. Predict the response for this very observation using the model. Compare predicted response with the actual response of this observation, and record the square of the prediction error. Repeat the above process for n times and sum up the squared errors. This sum is called the Leave One Out Cross Validation Score for a given model, and the model with smaller values of the score has a better predictive performance.
+
+Here is how the Leave One Out Cross Validation is done:
+
+```{r}
+DoPcaLoocv <- function(i, pc) {
+  # do PCA
+  pc_i <- prcomp(~ ., nontest_data[-i, -ncol(nontest_data)], scale. = TRUE)
+  # combine the principal components and the response variable into a dataframe
+  pc_crime_i <- data.frame(pc_i$x, "Crime" = nontest_data[-i, ncol(nontest_data)])
+  # build regression model on the principal components
+  lm_i <- lm(Crime ~ ., data = pc_crime_i[, c(seq(pc), 16)])
+  # obtain scaled alphas
+  if (pc == 1) {
+    a_ij <- as.matrix(pc_i$rotation[, pc] * lm_i$coefficients[pc + 1])
+  } else {
+    a_ij <- pc_i$rotation[, seq(pc)] %*% lm_i$coefficients[seq(pc) + 1]
+  }
+  # obtain column means and sds that are used for getting the unscaled alphas and beta0
+  col_means_i <- colMeans(nontest_data[-i, -ncol(nontest_data)])
+  col_sds_i <- t(as.matrix(nontest_data[-i, -ncol(nontest_data)]
+                           %>% summarise_if(is.numeric, sd)))
+  # obtain unscaled beta0
+  lm_i_beta0_us <- lm_i$coefficients[1] - sum(col_means_i * a_ij / col_sds_i)
+  # obtain unscaled alphas
+  a_ij_us <- a_ij / col_sds_i
+  pred <- lm_i_beta0_us + sum(nontest_data[i, -ncol(nontest_data)] * a_ij_us)
+  return(pred)
+}
+```
+
+```{r}
+n <- nrow(nontest_data)
+n_seq <- seq(1, n)
+lm1_pred_y <- sapply(n_seq, DoPcaLoocv, pc = 1)
+lm1_loocv_err <- sum((nontest_data[, ncol(nontest_data)] - lm1_pred_y)^2)
+lm1_loocv_err
+```
+
+```{r}
+lm2_pred_y <- sapply(n_seq, DoPcaLoocv, pc = 2)
+lm2_loocv_err <- sum((nontest_data[, ncol(nontest_data)] - lm2_pred_y)^2)
+lm2_loocv_err
+```
+
+```{r}
+lm3_pred_y <- sapply(n_seq, function(i) {
+  lm_i <- lm(Crime ~ M + Ed + Po1 + U2 + Ineq + Prob, nontest_data[-i,])
+  pred <- predict.lm(lm_i, nontest_data[i, -ncol(nontest_data)])
+  return(pred)
+})
+lm3_loocv_err <- sum((nontest_data[, ncol(nontest_data)] - lm3_pred_y)^2)
+lm3_loocv_err
+```
+
+As we can see, the Leave One Out Cross Validation Score for the selection model from [my previous project](https://github.com/alfred-kctang/lm-crime) is much less than the scores for the models using only the first principal component and using both the first and second principal components. Thus, the model lm3 after stepwise variable selection using backward elimination has a better predictive performance than the models constructed with principal components after PCA. A possible explanation for this case is that there are some of the explanatory variables are not useful for predicting crime rates but their noise are incorporated into the principal components, although PCA removed some of the correlations between the explanatory variables.
+
+Now that we have the best model chosen, let us rebuild the model and make an unbiased estimate of the model performance by seeing how accurate it predicts on the test set.
+
+```{r}
+lm3 <- lm(formula = Crime ~ M + Ed + Po1 + U2 + Ineq + Prob, nontest_data)
+pred <- predict.lm(lm3, test_data[, -ncol(test_data)])
+test_err <- sum((test_data[, ncol(test_data)] - pred)^2)
+test_err
+```
+
+If the sum of squared errors is divided by the number of predictions and then is taken square root, we would have a rough idea about the deviance of the predictions on average.
+
+```{r}
+test_rt_avg_err <- sqrt(test_err / nrow(test_data))
+test_rt_avg_err
+```
+
+If we divide this number by the mean crime rates on the test set, we would have an idea about how far off the predictions, given the magnitude of the values.
+
+```{r}
+test_rt_avg_err / mean(test_data[, ncol(test_data)])
+```
+
+In other words, the predictions from the best model would be deviated from the actual values on average by about 20 percent, which is not bad given the small sample size.
